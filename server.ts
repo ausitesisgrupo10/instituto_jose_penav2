@@ -9,7 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { conectarBD } from './src/db/database.js';
+import { conectarBD, obtenerEstadoBD } from './src/db/database.js';
 
 import authRoutes from './src/routes/authRoutes.js';
 import userRoutes from './src/routes/userRoutes.ts';
@@ -41,21 +41,33 @@ async function iniciarServidor() {
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
 
-  // Conexión a MongoDB (Atlas via MONGODB_URI o respaldo local/en memoria) sin bloquear el arranque del puerto 3000
+  // Conexión a MongoDB (Atlas via MONGODB_URI o respaldo local/en memoria) iniciada tras enlazar el puerto 3000
+  let dbReadyPromise: Promise<void> | null = null;
   let dbInitError: unknown = null;
-  const dbReadyPromise = conectarBD().catch((err) => {
-    dbInitError = err;
-  });
+  const asegurarConexionBD = () => {
+    if (!dbReadyPromise) {
+      dbReadyPromise = conectarBD().catch((err) => {
+        dbInitError = err;
+      });
+    }
+    return dbReadyPromise;
+  };
 
   // Endpoint de salud (responde de inmediato para healthchecks)
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', institucion: 'Instituto José Peña', fecha: new Date().toISOString() });
+    const estadoBd = obtenerEstadoBD();
+    res.json({
+      status: 'ok',
+      institucion: 'Instituto José Peña',
+      dbMode: estadoBd.modo,
+      fecha: new Date().toISOString(),
+    });
   });
 
   // Asegurar que la BD y el seeding inicial terminaron antes de atender rutas de negocio /api/*
   app.use('/api', async (req, res, next) => {
     try {
-      await dbReadyPromise;
+      await asegurarConexionBD();
       if (dbInitError) {
         throw dbInitError;
       }
@@ -100,6 +112,7 @@ async function iniciarServidor() {
 
   app.listen(PORT, HOST, () => {
     console.log(`🚀 Servidor del Instituto José Peña ejecutándose en http://${HOST}:${PORT}`);
+    void asegurarConexionBD();
   });
 }
 
